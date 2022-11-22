@@ -4,6 +4,7 @@ import os
 import logging
 import urllib3
 import requests
+import urllib.parse as urlparse
 
 from telegram import ForceReply, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
@@ -40,15 +41,52 @@ def upload(update: Update, context: CallbackContext):
 
     return UPLOAD
 
+def filename_from_url(url):
+    fname = os.path.basename(urlparse.urlparse(url).path)
+    if len(fname.strip(" \n\t.")) == 0:
+        return None
+    return fname
+
+def filename_from_headers(headers):
+    if type(headers) == str:
+        headers = headers.splitlines()
+    if type(headers) == list:
+        headers = dict([x.split(':', 1) for x in headers])
+    cdisp = headers.get("Content-Disposition")
+    if not cdisp:
+        return None
+    cdtype = cdisp.split(';')
+    if len(cdtype) == 1:
+        return None
+    if cdtype[0].strip().lower() not in ('inline', 'attachment'):
+        return None
+    # several filename params is illegal, but just in case
+    fnames = [x for x in cdtype[1:] if x.strip().startswith('filename=')]
+    if len(fnames) > 1:
+        return None
+    name = fnames[0].split('=')[1].strip(' \t"')
+    name = os.path.basename(name)
+    if not name:
+        return None
+    return name
+
+def detect_filename(url=None, headers=None):
+    names = dict(out='', url='', headers='')
+    if url:
+        names["url"] = filename_from_url(url) or ''
+    if headers:
+        names["headers"] = filename_from_headers(headers) or ''
+    return names["out"] or names["headers"] or names["url"]
 
 def change_filename(update: Update, context: CallbackContext):
     """Stores the selected url and asks for change file."""
     user = update.message.from_user
     url = update.message.text
-    filename = os.path.basename(url)
+    r_name = requests.get(url, stream=True)
+    filename = detect_filename(url, r_name.headers)
     context.user_data["url"] = url
     update.message.reply_text(
-        f'Default filename is , "{filename[0:60]}", If you want to chnage filename'
+        f'Default filename is , "{filename[0:90]}", If you want to chnage filename'
         'enter new filename, or send /skip if you don\'t want to.',
     )
 
