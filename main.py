@@ -5,6 +5,7 @@ import logging
 import urllib3
 import requests
 import urllib.parse as urlparse
+from requests.exceptions import HTTPError
 
 from telegram import ForceReply, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
@@ -99,13 +100,17 @@ def downloader(url: str, filename: str):
 
     full_name = os.path.join(download_path, filename)
 
-    with requests.get(url, stream=True, verify=False) as r:
-        r.raise_for_status()
-        print(full_name)
-        with open(full_name, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=1024): 
-                f.write(chunk)
-    return full_name
+    try:
+        with requests.get(url, stream=True, verify=False) as r:
+            r.raise_for_status()
+            print(full_name)
+            with open(full_name, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1024): 
+                    f.write(chunk)
+    except HTTPError:
+        return False, "400 Client Error: Bad Request for url"
+    else:
+        return True, full_name
 
 def uploader(filename: str):
     session = requests.session()
@@ -134,12 +139,15 @@ def download(update: Update, context: CallbackContext):
     url = context.user_data.get("url", 'Not found')
     filename = update.message.text
     msg = update.message.reply_text("Downloading file...")
-    full_name = downloader(url, filename)
-    msg.edit_text("File downloaded")
-    msg = update.message.reply_text("Uploading file...")
-    resp = uploader(full_name)
-    file_remover(full_name)
-    msg.edit_text(resp)
+    res, full_name = downloader(url, filename)
+    if res:
+        msg.edit_text("File downloaded")
+        msg = update.message.reply_text("Uploading file...")
+        resp = uploader(full_name)
+        file_remover(full_name)
+        msg.edit_text(resp)
+    else:
+        msg.edit_text(full_name)
 
     return ConversationHandler.END
 
@@ -150,14 +158,15 @@ def skip_download(update: Update, context: CallbackContext):
     url = context.user_data.get("url", 'Not found')
     filename = os.path.basename(url)
     msg = update.message.reply_text("Downloading file...")
-    full_name = downloader(url, filename)
-    msg.edit_text("File downloaded")
-    msg = update.message.reply_text("Uploading file...")
-    resp = uploader(full_name)
-    file_remover(full_name)
-    msg.edit_text(resp)
-
-    return ConversationHandler.END
+    res, full_name = downloader(url, filename)
+    if res:
+        msg.edit_text("File downloaded")
+        msg = update.message.reply_text("Uploading file...")
+        resp = uploader(full_name)
+        file_remover(full_name)
+        msg.edit_text(resp)
+    else:
+        msg.edit_text(full_name)
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
