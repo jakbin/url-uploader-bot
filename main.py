@@ -85,6 +85,7 @@ def change_filename(update: Update, context: CallbackContext):
     url = update.message.text
     r_name = requests.get(url, stream=True)
     filename = detect_filename(url, r_name.headers)
+    context.user_data["filename"] = filename
     context.user_data["url"] = url
     update.message.reply_text(
         f'Default filename is , "{filename[0:90]}", If you want to chnage filename'
@@ -156,7 +157,7 @@ def skip_download(update: Update, context: CallbackContext):
     """Skip change file name, download and upload file with default name"""
     user = update.message.from_user
     url = context.user_data.get("url", 'Not found')
-    filename = os.path.basename(url)
+    filename = context.user_data.get("filename", "Not found")
     msg = update.message.reply_text("Downloading file...")
     res, full_name = downloader(url, filename)
     if res:
@@ -167,6 +168,8 @@ def skip_download(update: Update, context: CallbackContext):
         msg.edit_text(resp)
     else:
         msg.edit_text(full_name)
+
+    return ConversationHandler.END
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
