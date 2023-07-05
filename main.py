@@ -31,14 +31,14 @@ UPLOAD, DOWNLOAD = range(2)
 async def start(update: Update, context: CallbackContext) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
-    update.message.reply_markdown_v2(
+    await update.message.reply_markdown_v2(
         fr'Hi {user.mention_markdown_v2()}\!',
         reply_markup=ForceReply(),
     )
 
 async def upload(update: Update, context: CallbackContext):
     """Starts the conversation and asks the user for url"""
-    update.message.reply_text("Enter your url :- ")
+    await update.message.reply_text("Enter your url :- ")
 
     return UPLOAD
 
@@ -87,7 +87,7 @@ async def change_filename(update: Update, context: CallbackContext):
     filename = detect_filename(url, r_name.headers)
     context.user_data["filename"] = filename
     context.user_data["url"] = url
-    update.message.reply_text(
+    await update.message.reply_text(
         f'Default filename is , "{filename[0:90]}", If you want to chnage filename'
         'enter new filename, or send /skip if you don\'t want to.',
     )
@@ -139,16 +139,16 @@ async def download(update: Update, context: CallbackContext):
     user = update.message.from_user
     url = context.user_data.get("url", 'Not found')
     filename = update.message.text
-    msg = update.message.reply_text("Downloading file...")
+    msg = await update.message.reply_text("Downloading file...")
     res, full_name = downloader(url, filename)
     if res:
-        msg.edit_text("File downloaded")
-        msg = update.message.reply_text("Uploading file...")
+        await msg.edit_text("File downloaded")
+        msg = await update.message.reply_text("Uploading file...")
         resp = uploader(full_name)
         file_remover(full_name)
-        msg.edit_text(resp)
+        await msg.edit_text(resp)
     else:
-        msg.edit_text(full_name)
+        await msg.edit_text(full_name)
 
     return ConversationHandler.END
 
@@ -158,16 +158,16 @@ async def skip_download(update: Update, context: CallbackContext):
     user = update.message.from_user
     url = context.user_data.get("url", 'Not found')
     filename = context.user_data.get("filename", "Not found")
-    msg = update.message.reply_text("Downloading file...")
+    msg = await update.message.reply_text("Downloading file...")
     res, full_name = downloader(url, filename)
     if res:
-        msg.edit_text("File downloaded")
-        msg = update.message.reply_text("Uploading file...")
+        await msg.edit_text("File downloaded")
+        msg = await update.message.reply_text("Uploading file...")
         resp = uploader(full_name)
         file_remover(full_name)
-        msg.edit_text(resp)
+        await msg.edit_text(resp)
     else:
-        msg.edit_text(full_name)
+        await msg.edit_text(full_name)
 
     return ConversationHandler.END
 
@@ -175,7 +175,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
     user = update.message.from_user
     logger.info("User %s canceled the conversation.", user.first_name)
-    update.message.reply_text(
+    await update.message.reply_text(
         'Bye! I hope we can talk again some day.'
     )
 
