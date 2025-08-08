@@ -5,7 +5,9 @@ import logging
 import urllib3
 import requests
 import urllib.parse as urlparse
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, MissingSchema, JSONDecodeError
+from anonupload import download
+from anonupload.main import detect_filename, remove_file
 
 from telegram import ForceReply, Update
 from telegram.ext import (
@@ -28,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 UPLOAD, DOWNLOAD = range(2)
 
+download_path = 'downloads'
+if not os.path.isdir(download_path):
+    os.mkdir(download_path)
+
 async def start(update: Update, context: CallbackContext) -> None:
     """Send a message when the command /start is issued."""
     user = update.effective_user
@@ -42,48 +48,16 @@ async def upload(update: Update, context: CallbackContext):
 
     return UPLOAD
 
-def filename_from_url(url):
-    fname = os.path.basename(urlparse.urlparse(url).path)
-    if len(fname.strip(" \n\t.")) == 0:
-        return None
-    return fname
-
-def filename_from_headers(headers):
-    if type(headers) == str:
-        headers = headers.splitlines()
-    if type(headers) == list:
-        headers = dict([x.split(':', 1) for x in headers])
-    cdisp = headers.get("Content-Disposition")
-    if not cdisp:
-        return None
-    cdtype = cdisp.split(';')
-    if len(cdtype) == 1:
-        return None
-    if cdtype[0].strip().lower() not in ('inline', 'attachment'):
-        return None
-    # several filename params is illegal, but just in case
-    fnames = [x for x in cdtype[1:] if x.strip().startswith('filename=')]
-    if len(fnames) > 1:
-        return None
-    name = fnames[0].split('=')[1].strip(' \t"')
-    name = os.path.basename(name)
-    if not name:
-        return None
-    return name
-
-def detect_filename(url=None, headers=None):
-    names = dict(out='', url='', headers='')
-    if url:
-        names["url"] = filename_from_url(url) or ''
-    if headers:
-        names["headers"] = filename_from_headers(headers) or ''
-    return names["out"] or names["headers"] or names["url"]
 
 async def change_filename(update: Update, context: CallbackContext):
     """Stores the selected url and asks for change file."""
     user = update.message.from_user
     url = update.message.text
-    r_name = requests.get(url, stream=True)
+    try:
+        r_name = requests.get(url, stream=True)
+    except MissingSchema:
+        await update.message.reply_text("worng url")
+        return ConversationHandler.END
     filename = detect_filename(url, r_name.headers)
     context.user_data["filename"] = filename
     context.user_data["url"] = url
@@ -91,41 +65,8 @@ async def change_filename(update: Update, context: CallbackContext):
         f'Default filename is , "{filename[0:90]}", If you want to chnage filename'
         'enter new filename, or send /skip if you don\'t want to.',
     )
-
     return DOWNLOAD
 
-def downloader(url: str, filename: str):
-    download_path = 'downloads'
-    if not os.path.isdir(download_path):
-        os.mkdir(download_path)
-
-    full_name = os.path.join(download_path, filename)
-
-    try:
-        with requests.get(url, stream=True, verify=False) as r:
-            r.raise_for_status()
-            print(full_name)
-            with open(full_name, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=1024): 
-                    f.write(chunk)
-    except HTTPError:
-        return False, "400 Client Error: Bad Request for url"
-    else:
-        return True, full_name
-
-def uploader(filename: str):
-    session = requests.session()
-    with open(filename, "rb") as fp:
-        file = {"file": (filename, fp)}
-        resp = session.post('https://api.anonfiles.com/upload', files=file).json()
-        if resp['status']:
-            urlshort = resp['data']['file']['url']['short']
-            urllong = resp['data']['file']['url']['full']
-            return f'File uploaded:\nFull URL: {urllong}\nShort URL: {urlshort}'
-        else:
-            message = resp['error']['message']
-            errtype = resp['error']['type']
-            return f'[ERROR]: {message}\n{errtype}'
 
 def file_remover(filename: str):
     if os.path.isfile(filename):
@@ -134,40 +75,26 @@ def file_remover(filename: str):
          print("file not found.")
 
 
-async def download(update: Update, context: CallbackContext):
+async def fdownload(update: Update, context: CallbackContext):
     """download file and upload file with given name"""
     user = update.message.from_user
-    url = context.user_data.get("url", 'Not found')
     filename = update.message.text
+    url = context.user_data.get("url", 'Not found')
     msg = await update.message.reply_text("Downloading file...")
-    res, full_name = downloader(url, filename)
-    if res:
-        await msg.edit_text("File downloaded")
-        msg = await update.message.reply_text("Uploading file...")
-        resp = uploader(full_name)
-        file_remover(full_name)
-        await msg.edit_text(resp)
-    else:
-        await msg.edit_text(full_name)
+    f_msg = download(url, filename, download_path, True)
+    await msg.edit_text(f"File uploaded:\nFull url : {f_msg}")
 
     return ConversationHandler.END
 
 
 async def skip_download(update: Update, context: CallbackContext):
-    """Skip change file name, download and upload file with default name"""
+    """Skip change file name, download and upload file with async default name"""
     user = update.message.from_user
     url = context.user_data.get("url", 'Not found')
     filename = context.user_data.get("filename", "Not found")
     msg = await update.message.reply_text("Downloading file...")
-    res, full_name = downloader(url, filename)
-    if res:
-        await msg.edit_text("File downloaded")
-        msg = await update.message.reply_text("Uploading file...")
-        resp = uploader(full_name)
-        file_remover(full_name)
-        await msg.edit_text(resp)
-    else:
-        await msg.edit_text(full_name)
+    f_msg = download(url, filename, download_path, True)
+    await msg.edit_text(f"File uploaded:\nFull url : {f_msg}")
 
     return ConversationHandler.END
 
@@ -175,6 +102,9 @@ async def cancel(update: Update, context: CallbackContext) -> int:
     """Cancels and ends the conversation."""
     user = update.message.from_user
     logger.info("User %s canceled the conversation.", user.first_name)
+    file_server_path = context.user_data.get('file_server_path', 'Not found')
+    if file_server_path != 'Not found':
+        remove_file(file_server_path)
     await update.message.reply_text(
         'Bye! I hope we can talk again some day.'
     )
@@ -184,7 +114,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 def main() -> None:
     """Run the bot."""
-    application = Application.builder().token("TOKEN").build()
+    application = Application.builder().token("Token").build()
 
     application.add_handler(CommandHandler("start", start))
 
@@ -193,7 +123,7 @@ def main() -> None:
         entry_points=[CommandHandler('upload', upload)],
         states={
             UPLOAD: [MessageHandler(filters.Entity('url') | filters.Document.ALL, change_filename)],
-            DOWNLOAD: [MessageHandler(filters.TEXT & ~filters.COMMAND, download), CommandHandler('skip', skip_download)],
+            DOWNLOAD: [MessageHandler(filters.TEXT & ~filters.COMMAND, fdownload), CommandHandler('skip', skip_download)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
     )
